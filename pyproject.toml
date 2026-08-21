@@ -1,0 +1,25 @@
+[project]
+name = "ios-label-printer"
+version = "1.0.0"
+description = "High-resolution iOS inventory labels from a connected device"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6",
+    "pymobiledevice3>=4.0",
+    "Pillow>=10.0",
+    "qrcode>=7.4",
+]
+
+[project.scripts]
+ios-label-printer = "ios_label_printer.app:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ios_label_printer = ["data/*.json"]

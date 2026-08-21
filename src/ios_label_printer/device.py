@@ -136,10 +136,6 @@ def battery_health_from_payload(payload: Any) -> int | None:
     maximum = _first_number(values, BATTERY_MAX_KEYS)
     design = _first_number(values, BATTERY_DESIGN_KEYS)
     if maximum is None or design is None or design <= 0:
-        current = _walk_find(payload, ("BatteryCurrentCapacity", "CurrentCapacity"))
-        percent = _first_number(current, ("BatteryCurrentCapacity", "CurrentCapacity"))
-        if percent is not None and 0 < percent <= 100:
-            return int(round(percent))
         return None
     return int(round(100.0 * maximum / design))
 

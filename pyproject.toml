@@ -1,6 +1,6 @@
 [project]
 name = "ios-label-printer"
-version = "1.0.0"
+version = "1.0.1"
 description = "High-resolution iOS inventory labels from a connected device"
 readme = "README.md"
 requires-python = ">=3.10"

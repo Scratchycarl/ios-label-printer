@@ -53,7 +53,7 @@ class DeviceInfo:
     def field_value(self, field_name: str) -> str:
         mapping = {
             "model": self.model or self.product_type or "—",
-            "battery_health": f"{self.battery_health}%" if self.battery_health is not None else "—",
+            "battery_health": f"{self.battery_health}%" if self.battery_health is not None else "--%",
             "storage": f"{self.storage_gb}GB" if self.storage_gb is not None else "—",
             "ios_version": self.ios_version or "—",
             "serial": self.serial or "—",

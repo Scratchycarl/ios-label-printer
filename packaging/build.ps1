@@ -28,6 +28,7 @@ iOS Label Printer
 1. Keep this whole folder together. Run ios-label-printer.exe.
 2. Install Apple Devices (or iTunes) so Apple Mobile Device Support is running.
 3. Plug in an iPhone with USB, unlock it, and tap Trust.
+4. For Samsung, install Samsung USB drivers, set USB to File transfer, unlock the phone, switch the app to Samsung, and press Read device.
 
 Templates are saved under:
 %APPDATA%\ios-label-printer\templates\

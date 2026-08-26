@@ -5,10 +5,11 @@ from io import BytesIO
 from pathlib import Path
 
 from PySide6.QtCore import QMarginsF, QObject, QSize, QSizeF, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QImage, QKeySequence, QPageLayout, QPageSize, QPainter, QPixmap
+from PySide6.QtGui import QAction, QImage, QKeySequence, QPageLayout, QPageSize, QPainter, QPalette, QPixmap
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -57,9 +58,13 @@ class DeviceWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
 
+    def __init__(self, platform: str = "apple") -> None:
+        super().__init__()
+        self.platform = platform
+
     def run(self) -> None:
         try:
-            self.finished.emit(read_connected_device())
+            self.finished.emit(read_connected_device(self.platform))
         except DeviceReadError as exc:
             self.failed.emit(str(exc))
         except Exception:
@@ -104,6 +109,7 @@ class MainWindow(QMainWindow):
             self.template = load_template(self.template_path)
         except Exception:
             self.template = bundled_default_template()
+        self.platform = "apple"
         self.device = DeviceInfo.sample()
         self.dirty = False
         self._thread: QThread | None = None
@@ -122,6 +128,61 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(18, 18))
         self.addToolBar(toolbar)
+
+        platform_host = QWidget()
+        platform_layout = QHBoxLayout(platform_host)
+        platform_layout.setContentsMargins(4, 0, 10, 0)
+        platform_layout.setSpacing(0)
+        self.apple_button = QPushButton("Apple")
+        self.samsung_button = QPushButton("Samsung")
+        self.apple_button.setCheckable(True)
+        self.samsung_button.setCheckable(True)
+        self.apple_button.setChecked(True)
+        self.apple_button.setCursor(Qt.PointingHandCursor)
+        self.samsung_button.setCursor(Qt.PointingHandCursor)
+        pal = toolbar.palette()
+        window = pal.color(QPalette.Window)
+        text = pal.color(QPalette.WindowText)
+        highlight = pal.color(QPalette.Highlight)
+        highlighted_text = pal.color(QPalette.HighlightedText)
+        mid = pal.color(QPalette.Mid)
+        if window.lightness() < 128:
+            idle = window.lighter(145)
+            hover = window.lighter(175)
+        else:
+            idle = window.darker(104)
+            hover = window.darker(112)
+        toggle_style = f"""
+            QPushButton {{
+                padding: 4px 14px;
+                border: 1px solid {mid.name()};
+                background: {idle.name()};
+                color: {text.name()};
+            }}
+            QPushButton:hover:!checked {{
+                background: {hover.name()};
+            }}
+            QPushButton:checked {{
+                background: {highlight.name()};
+                color: {highlighted_text.name()};
+                border-color: {highlight.name()};
+            }}
+        """
+        self.apple_button.setStyleSheet(
+            toggle_style + "QPushButton { border-top-right-radius: 0; border-bottom-right-radius: 0; }"
+        )
+        self.samsung_button.setStyleSheet(
+            toggle_style + "QPushButton { border-left: none; border-top-left-radius: 0; border-bottom-left-radius: 0; }"
+        )
+        self.platform_group = QButtonGroup(self)
+        self.platform_group.setExclusive(True)
+        self.platform_group.addButton(self.apple_button)
+        self.platform_group.addButton(self.samsung_button)
+        self.apple_button.clicked.connect(self._on_platform_changed)
+        self.samsung_button.clicked.connect(self._on_platform_changed)
+        platform_layout.addWidget(self.apple_button)
+        platform_layout.addWidget(self.samsung_button)
+        toolbar.addWidget(platform_host)
 
         read_action = QAction("Read device", self)
         read_action.setShortcut(QKeySequence("F5"))
@@ -195,8 +256,10 @@ class MainWindow(QMainWindow):
         device_layout = QFormLayout(device_box)
         self.device_model_label = QLabel("—")
         self.device_source_label = QLabel("sample")
+        self.device_frp_label = QLabel("—")
         device_layout.addRow("Model", self.device_model_label)
         device_layout.addRow("Source", self.device_source_label)
+        device_layout.addRow("FRP", self.device_frp_label)
         layout.addWidget(device_box)
 
         fields_box = QGroupBox("Fields")
@@ -213,7 +276,7 @@ class MainWindow(QMainWindow):
         self.props_form = form
         self.prefix_edit = QComboBox()
         self.prefix_edit.setEditable(True)
-        self.prefix_edit.addItems(["", "BH ", "iOS ", "SN ", "IMEI ", "Storage "])
+        self.prefix_edit.addItems(["", "BH ", "iOS ", "Android ", "SN ", "IMEI ", "Storage ", "FRP ", "CSC "])
         self.text_edit = QLineEdit()
         self.text_edit.setPlaceholderText("Type custom text")
         self.lock_combo = QComboBox()
@@ -338,6 +401,7 @@ class MainWindow(QMainWindow):
         self.margin_left.setValue(self.template.margin_mm.left)
         self.device_model_label.setText(self.device.model or "—")
         self.device_source_label.setText(self.device.source or "—")
+        self.device_frp_label.setText(self.device.frp_status or "—")
         self.canvas.set_document(self.template, self.device)
         self._building = False
         self.refresh_preview()
@@ -539,12 +603,27 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._preview_timer.start()
 
+    def _on_platform_changed(self) -> None:
+        self.platform = "samsung" if self.samsung_button.isChecked() else "apple"
+        if self.device.source == "sample":
+            self.device = DeviceInfo.sample_samsung() if self.platform == "samsung" else DeviceInfo.sample()
+            self.reload_document()
+        if self.platform == "samsung":
+            self.statusBar().showMessage(
+                "Samsung: plug in over USB, set File transfer, unlock the screen, then press Read device."
+            )
+        else:
+            self.statusBar().showMessage("Connect an iPhone and press Read device.")
+
     def read_device(self) -> None:
         if self._thread and self._thread.isRunning():
             return
-        self.statusBar().showMessage("Reading connected iPhone…")
+        if self.platform == "samsung":
+            self.statusBar().showMessage("Reading Samsung USB modem…")
+        else:
+            self.statusBar().showMessage("Reading connected iPhone…")
         self._thread = QThread(self)
-        self._worker = DeviceWorker()
+        self._worker = DeviceWorker(self.platform)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_device_read)
@@ -563,7 +642,7 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "Could not read device", message)
 
     def use_sample(self) -> None:
-        self.device = DeviceInfo.sample()
+        self.device = DeviceInfo.sample_samsung() if self.platform == "samsung" else DeviceInfo.sample()
         self.reload_document()
         self.statusBar().showMessage("Showing sample data")
 

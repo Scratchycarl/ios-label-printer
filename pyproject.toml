@@ -1,7 +1,7 @@
 [project]
 name = "ios-label-printer"
-version = "1.0.1"
-description = "High-resolution iOS inventory labels from a connected device"
+version = "1.1.0"
+description = "High-resolution iPhone and Samsung inventory labels from a connected device"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -9,6 +9,9 @@ dependencies = [
     "pymobiledevice3>=4.0",
     "Pillow>=10.0",
     "qrcode>=7.4",
+    "pyserial>=3.5",
+    "pyusb>=1.2",
+    "libusb-package>=1.0.26",
 ]
 
 [project.scripts]

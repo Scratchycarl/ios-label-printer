@@ -1,21 +1,22 @@
 # iOS Label Printer
 
-Desktop app for printing high-resolution iPhone inventory labels. It reads a connected device over USB using the same lockdown / diagnostics services as libimobiledevice, then lays out a 40×30 mm label you can rearrange and save.
+Desktop app for printing high-resolution iPhone and Samsung inventory labels. It reads a connected iPhone over USB using the same lockdown / diagnostics services as libimobiledevice, or a Galaxy over the Samsung USB modem AT interface (the same identity path SamFw uses in MTP info mode), then lays out a 40×30 mm label you can rearrange and save.
 
 ## Download
 
 Get the Windows build from [Releases](https://github.com/Scratchycarl/ios-label-printer/releases). Unzip `ios-label-printer-windows.zip` and run `ios-label-printer.exe`. Keep the whole folder together.
 
-You still need **Apple Devices** or **iTunes** installed so Apple Mobile Device Support can talk to the phone.
+You still need **Apple Devices** or **iTunes** for iPhones. For Samsung, install Samsung USB drivers so Windows shows **SAMSUNG Mobile USB Modem**.
 
 ## What it prints
 
 - Device model
-- Battery health
+- Battery health (iPhone)
 - Storage
-- iOS version
+- iOS / Android version
 - Serial number
 - IMEI
+- FRP status (Samsung)
 - QR code with all of the above
 
 Default size is **40 mm × 30 mm** at **600 DPI**. Size, DPI, and margins are adjustable. The designer shows a live layout plus a high-res print preview.
@@ -23,8 +24,9 @@ Default size is **40 mm × 30 mm** at **600 DPI**. Size, DPI, and margins are ad
 ## Requirements
 
 - Windows with Python 3.10+
-- A USB-connected iPhone that you have tapped **Trust** on
-- **Apple Devices** or **iTunes** so Apple Mobile Device Support is running (this is the Windows usbmux / libimobiledevice transport)
+- For Apple: a USB-connected iPhone that you have tapped **Trust** on
+- For Apple: **Apple Devices** or **iTunes** so Apple Mobile Device Support is running (this is the Windows usbmux / libimobiledevice transport)
+- For Samsung: a USB-connected Galaxy in **File transfer (MTP)** mode, unlocked, with Samsung USB drivers installed. No computer-trust prompt is required.
 - Optional: `ideviceinfo` from libimobiledevice on PATH as a fallback
 
 ## Run from source

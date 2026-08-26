@@ -241,9 +241,12 @@ async def _enter(obj):
 
 async def _fetch_pymobiledevice3() -> DeviceInfo:
     try:
-        from pymobiledevice3.lockdown import create_using_usbmux
+        from pymobiledevice3.exceptions import MuxException
+        from pymobiledevice3.lockdown import PlistUsbmuxLockdownClient, create_using_usbmux
     except ImportError as exc:
         raise DeviceReadError("pymobiledevice3 is not installed") from exc
+
+    _patch_usbmux_pair_record_save(PlistUsbmuxLockdownClient, MuxException)
 
     created = None
     last_error: Exception | None = None
@@ -360,6 +363,25 @@ def _fetch_libimobiledevice_cli() -> DeviceInfo:
     return device_info_from_lockdown_values(values, extra)
 
 
+def _patch_usbmux_pair_record_save(plist_client_cls, mux_error_cls) -> None:
+    """Windows Apple Mobile Device Support often rejects SavePairRecord with 183 (already exists).
+
+    The pair record is already written to disk by then, so the usbmux save can be ignored.
+    """
+    if getattr(plist_client_cls.save_pair_record, "_ios_label_patched", False):
+        return
+    original = plist_client_cls.save_pair_record
+
+    async def patched(self):
+        try:
+            await original(self)
+        except mux_error_cls:
+            return
+
+    patched._ios_label_patched = True
+    plist_client_cls.save_pair_record = patched
+
+
 def _friendly_error(exc: BaseException) -> str:
     name = type(exc).__name__
     message = str(exc)
@@ -370,22 +392,33 @@ def _friendly_error(exc: BaseException) -> str:
         "FatalPairingError": "Unlock the iPhone and tap Trust, then try again.",
         "PairingError": "Unlock the iPhone and tap Trust, then try again.",
         "NotPairedError": "Unlock the iPhone and tap Trust, then try again.",
+        "UserDeniedPairingError": "Tap Trust on the iPhone pairing prompt, then retry.",
+        "PairingDialogResponsePendingError": "Unlock the iPhone and tap Trust, then retry.",
     }
     if name in mapping:
         return mapping[name]
+    if name == "MuxException" and "183" in message:
+        return (
+            "Could not save the pairing record in Apple Mobile Device Support. "
+            "Unlock the device, tap Trust, and retry."
+        )
     if "No device" in message or "no device" in message.lower():
         return "No iPhone is connected. Plug it in with USB and unlock it."
     return message or name
 
 
-def read_connected_device() -> DeviceInfo:
-    errors: list[str] = []
+def read_connected_device(platform: str = "apple") -> DeviceInfo:
+    if platform == "samsung":
+        from ios_label_printer.samsung import read_samsung_device
+
+        return read_samsung_device()
     try:
         return asyncio.run(_fetch_pymobiledevice3())
     except Exception as exc:
-        errors.append(f"pymobiledevice3: {_friendly_error(exc)}")
+        primary = _friendly_error(exc)
+    if not shutil.which("ideviceinfo"):
+        raise DeviceReadError(primary)
     try:
         return _fetch_libimobiledevice_cli()
     except Exception as exc:
-        errors.append(f"libimobiledevice: {_friendly_error(exc)}")
-    raise DeviceReadError("Could not read a connected iPhone. " + " ".join(errors))
+        raise DeviceReadError(primary + " " + _friendly_error(exc)) from exc

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 
-STANDARD_STORAGE_GB = (16, 32, 64, 128, 256, 512, 1024, 2048)
+STANDARD_STORAGE_GB = (8, 16, 32, 64, 128, 256, 512, 1024, 2048)
 
 
 def marketing_storage_gb(capacity_bytes: int | float | None) -> int | None:
@@ -12,8 +12,10 @@ def marketing_storage_gb(capacity_bytes: int | float | None) -> int | None:
         return None
     gb = float(capacity_bytes) / (1000**3)
     for size in STANDARD_STORAGE_GB:
-        if gb <= size * 1.08:
+        if size * 0.60 <= gb <= size * 1.08:
             return size
+    if gb < STANDARD_STORAGE_GB[0] * 0.60:
+        return None
     return int(round(gb))
 
 
@@ -35,6 +37,12 @@ class DeviceInfo:
     cycle_count: int | None = None
     device_name: str = ""
     source: str = ""
+    platform: str = "apple"
+    frp_status: str = ""
+    csc: str = ""
+    unique_number: str = ""
+    phone_number: str = ""
+    country: str = ""
 
     @classmethod
     def sample(cls) -> DeviceInfo:
@@ -48,6 +56,23 @@ class DeviceInfo:
             imei="356938035643809",
             color="Black",
             source="sample",
+            platform="apple",
+        )
+
+    @classmethod
+    def sample_samsung(cls) -> DeviceInfo:
+        return cls(
+            model="SM-A037W",
+            product_type="SM-A037W",
+            ios_version="13",
+            serial="R9WSAMPLE0F",
+            imei="359905000000000",
+            frp_status="UNLOCK",
+            csc="CHR",
+            unique_number="W15SAMPLE000000",
+            country="CA",
+            source="sample",
+            platform="samsung",
         )
 
     def field_value(self, field_name: str) -> str:
@@ -61,6 +86,8 @@ class DeviceInfo:
             "imei2": self.imei2 or "—",
             "product_type": self.product_type or "—",
             "color": self.color or "—",
+            "frp_status": self.frp_status or "—",
+            "csc": self.csc or self.region or "—",
         }
         if field_name == "qr_payload":
             return self.qr_payload()
@@ -69,21 +96,29 @@ class DeviceInfo:
     def qr_value(self, field_name: str) -> str:
         if field_name == "date":
             return date.today().strftime("%Y/%m/%d")
+        os_version = self.ios_version
+        if os_version and self.platform == "samsung":
+            os_version = f"Android {os_version}"
         mapping = {
             "model": self.model,
             "color": self.color,
             "storage": f"{self.storage_gb}GB" if self.storage_gb is not None else "",
             "serial": self.serial,
-            "ios_version": self.ios_version,
+            "ios_version": os_version,
             "imei": (self.imei or "").strip() or "No IMEI",
             "imei2": self.imei2,
             "battery_health": f"{self.battery_health}%" if self.battery_health is not None else "",
             "ecid": self.ecid,
             "model_number": self.model_number,
-            "region": self.region,
+            "region": self.csc or self.region,
             "regulatory": self.regulatory,
             "cycle_count": "" if self.cycle_count is None else str(self.cycle_count),
             "device_name": self.device_name,
+            "frp_status": self.frp_status,
+            "csc": self.csc,
+            "unique_number": self.unique_number,
+            "phone_number": self.phone_number,
+            "country": self.country,
         }
         return str(mapping.get(field_name, "") or "")
 
@@ -107,9 +142,11 @@ LABEL_FIELDS = (
     ("model", "Device model"),
     ("battery_health", "Battery health"),
     ("storage", "Storage"),
-    ("ios_version", "iOS version"),
+    ("ios_version", "OS version"),
     ("serial", "Serial number"),
     ("imei", "IMEI"),
+    ("frp_status", "FRP status"),
+    ("csc", "CSC"),
     ("qr_payload", "QR code"),
 )
 
@@ -129,7 +166,7 @@ QR_FIELD_CHOICES = (
     ("color", "Color"),
     ("storage", "Storage"),
     ("serial", "Serial Number"),
-    ("ios_version", "iOS Version"),
+    ("ios_version", "OS Version"),
     ("imei", "IMEI"),
     ("imei2", "IMEI2"),
     ("ecid", "ECID"),
@@ -138,6 +175,11 @@ QR_FIELD_CHOICES = (
     ("regulatory", "Regulatory Model"),
     ("cycle_count", "Charge Cycles"),
     ("battery_health", "Battery Health"),
+    ("frp_status", "FRP Status"),
+    ("csc", "CSC"),
+    ("unique_number", "Unique Number"),
+    ("phone_number", "Phone Number"),
+    ("country", "Country"),
     ("date", "Date"),
     ("device_name", "Name"),
 )
@@ -199,6 +241,9 @@ class LabelElement:
     def display_text(self, device: DeviceInfo) -> str:
         if self.is_custom() or self.is_lock_status():
             return self.text
+        if self.field == "ios_version" and self.prefix.strip() in {"", "iOS", "Android"}:
+            name = "Android " if device.platform == "samsung" else "iOS "
+            return f"{name}{device.field_value(self.field)}"
         return f"{self.prefix}{device.field_value(self.field)}"
 
     def build_qr_payload(self, device: DeviceInfo, template: LabelTemplate | None = None) -> str:
@@ -304,6 +349,8 @@ class LabelElement:
             "ios_version": dict(id="ios", prefix="iOS ", y_mm=10.2, width_mm=24.4, height_mm=3.4),
             "serial": dict(id="serial", prefix="SN ", y_mm=14.6, width_mm=37.2, height_mm=3.6, font_size_pt=5.5),
             "imei": dict(id="imei", prefix="IMEI ", y_mm=18.6, width_mm=37.2, height_mm=3.6, font_size_pt=5.5),
+            "frp_status": dict(id="frp", prefix="FRP ", y_mm=22.4, width_mm=18.0, height_mm=3.4),
+            "csc": dict(id="csc", prefix="CSC ", y_mm=22.4, x_mm=20.0, width_mm=18.0, height_mm=3.4),
         }
         values = defaults.get(field_name, {"id": field_name})
         return cls(

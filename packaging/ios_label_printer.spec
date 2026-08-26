@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
 
 ROOT = Path(SPECPATH).resolve().parent
 SRC = ROOT / "src"
@@ -9,6 +9,8 @@ SRC = ROOT / "src"
 datas = collect_data_files("ios_label_printer")
 datas += copy_metadata("ios-label-printer")
 datas += copy_metadata("pymobiledevice3")
+binaries = collect_dynamic_libs("libusb_package")
+datas += collect_data_files("libusb_package")
 
 hiddenimports = [
     "ios_label_printer",
@@ -22,8 +24,18 @@ hiddenimports = [
     "PIL.Image",
     "PIL.ImageDraw",
     "PIL.ImageFont",
+    "serial",
+    "serial.tools",
+    "serial.tools.list_ports",
+    "usb",
+    "usb.core",
+    "usb.util",
+    "usb.backend",
+    "usb.backend.libusb1",
+    "libusb_package",
 ]
 hiddenimports += collect_submodules("pymobiledevice3")
+hiddenimports += collect_submodules("usb")
 hiddenimports += collect_submodules("construct")
 hiddenimports += collect_submodules("construct_typing")
 
@@ -88,7 +100,7 @@ excludes = [
 a = Analysis(
     [str(ROOT / "packaging" / "launch.py")],
     pathex=[str(SRC)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

@@ -1,3 +1,3 @@
-"""Print high-resolution inventory labels from a connected iOS device."""
+"""Print high-resolution inventory labels from a connected iPhone or Samsung device."""
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

@@ -77,8 +77,8 @@ COLOR_MAP = {
 }
 
 BATTERY_MAX_KEYS = (
-    "AppleRawMaxCapacity",
     "NominalChargeCapacity",
+    "AppleRawMaxCapacity",
     "MaxCapacity",
     "AppleRawMaxCapability",
 )

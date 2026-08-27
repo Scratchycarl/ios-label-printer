@@ -60,3 +60,17 @@ def ensure_user_default_template() -> Path:
 def load_device_model_map() -> dict[str, str]:
     data = json.loads(package_data_text("device_models.json"))
     return {str(key): str(value) for key, value in data.items()}
+
+
+def load_device_color_maps() -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    data = json.loads(package_data_text("device_colors.json"))
+    model_numbers = {
+        str(key).upper(): str(value)
+        for key, value in (data.get("model_numbers") or {}).items()
+    }
+    product_enclosure: dict[str, dict[str, str]] = {}
+    for product, mapping in (data.get("product_enclosure") or {}).items():
+        product_enclosure[str(product)] = {
+            str(code): str(name) for code, name in (mapping or {}).items()
+        }
+    return model_numbers, product_enclosure

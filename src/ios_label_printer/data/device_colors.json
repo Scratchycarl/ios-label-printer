@@ -1,0 +1,28 @@
+{
+  "model_numbers": {
+    "MK7M3": "Space Gray",
+    "MK7P3": "Starlight",
+    "MK7R3": "Purple",
+    "MLWL3": "Pink",
+    "MK7T3": "Space Gray",
+    "MK7V3": "Starlight",
+    "MK7X3": "Purple",
+    "MLWR3": "Pink",
+    "MK893": "Space Gray",
+    "MK8C3": "Starlight",
+    "MK8E3": "Purple",
+    "MLX43": "Pink",
+    "MK8F3": "Space Gray",
+    "MK8H3": "Starlight",
+    "MK8K3": "Purple",
+    "MLX93": "Pink"
+  },
+  "product_enclosure": {
+    "iPad14,1": {
+      "3": "Pink"
+    },
+    "iPad14,2": {
+      "3": "Pink"
+    }
+  }
+}

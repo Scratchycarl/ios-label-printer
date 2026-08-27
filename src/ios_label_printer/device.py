@@ -3,26 +3,20 @@ from __future__ import annotations
 import asyncio
 import inspect
 import plistlib
+import re
 import shutil
 import subprocess
 from contextlib import asynccontextmanager
 from typing import Any
 
 from ios_label_printer.models import DeviceInfo, marketing_storage_gb
-from ios_label_printer.template import load_device_model_map
+from ios_label_printer.template import load_device_color_maps, load_device_model_map
 
 MODEL_MAP = load_device_model_map()
+MODEL_NUMBER_COLORS, PRODUCT_ENCLOSURE_COLORS = load_device_color_maps()
 
+# Named / hex finishes only. Bare enclosure digits are product-specific and live in device_colors.json.
 COLOR_MAP = {
-    "1": "Black",
-    "2": "White",
-    "3": "Gold",
-    "4": "Silver",
-    "5": "Pink",
-    "6": "Blue",
-    "7": "Yellow",
-    "8": "Red",
-    "9": "Space Gray",
     "black": "Black",
     "white": "White",
     "gold": "Gold",
@@ -67,7 +61,21 @@ COLOR_MAP = {
     "5eb0e5": "Blue",
     "d4e4ed": "Blue",
     "e6d0c5": "Pink",
+    "e1ccb5": "Gold",
+    "e8b4c8": "Pink",
+    "e4c1d0": "Pink",
+    "f2c4d0": "Pink",
+    "e3b2c4": "Pink",
+    "f5d0dc": "Pink",
+    "d4a5b8": "Pink",
+    "fac8d4": "Pink",
+    "c8b8d8": "Purple",
+    "b8a8c8": "Purple",
+    "d4c8e0": "Purple",
     "b9b7ba": "Purple",
+    "e8dcc8": "Starlight",
+    "f1e6d4": "Starlight",
+    "e1e4e3": "Silver",
     "5c5b57": "Black Titanium",
     "f2f1ed": "White Titanium",
     "3b3b3c": "Black Titanium",
@@ -75,6 +83,26 @@ COLOR_MAP = {
     "3c475b": "Blue Titanium",
     "c2a48d": "Desert Titanium",
 }
+
+# Front bezel digits are mostly Black/White across generations.
+FRONT_DIGIT_COLORS = {
+    "1": "Black",
+    "2": "White",
+}
+
+# Housing/back first. DeviceColor is the front bezel and is "1" (Black) on every iPad mini 6/7.
+_HOUSING_COLOR_KEYS = (
+    "DeviceHousingColor",
+    "DeviceEnclosureColor",
+    "DeviceBackingColor",
+)
+_HOUSING_RGB_KEYS = ("DeviceEnclosureRGBColor",)
+_FRONT_COLOR_KEYS = ("DeviceCoverGlassColor", "DeviceColor")
+_FRONT_RGB_KEYS = ("DeviceRGBColor",)
+COLOR_LOCKDOWN_KEYS = _HOUSING_COLOR_KEYS + _HOUSING_RGB_KEYS + _FRONT_COLOR_KEYS + _FRONT_RGB_KEYS
+_HEX_DISTANCE_LIMIT = 32 * 32 * 3
+_MODEL_NUMBER_RE = re.compile(r"[A-Z0-9]{4,}")
+
 
 BATTERY_MAX_KEYS = (
     "NominalChargeCapacity",
@@ -148,27 +176,150 @@ def _storage_from_disk_usage(payload: Any) -> int | None:
     return marketing_storage_gb(capacity)
 
 
-def _pretty_color(value: str) -> str:
+def _hex_rgb(token: str) -> tuple[int, int, int] | None:
+    text = token.strip().lstrip("#").lower()
+    if len(text) != 6 or any(ch not in "0123456789abcdef" for ch in text):
+        return None
+    return int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)
+
+
+def _normalize_color_value(value: Any, as_rgb: bool = False) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, bytes):
+        value = value.hex()
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, (int, float)):
+        number = int(value)
+        if as_rgb or number > 15:
+            return f"{number & 0xFFFFFF:06x}"
+        if number >= 0:
+            return str(number)
+        return ""
+    return str(value).strip()
+
+
+def _nearest_named_hex(token: str) -> str:
+    rgb = _hex_rgb(token)
+    if rgb is None:
+        return ""
+    best_name = ""
+    best_dist = _HEX_DISTANCE_LIMIT + 1
+    for map_key, name in COLOR_MAP.items():
+        other = _hex_rgb(map_key)
+        if other is None:
+            continue
+        dist = sum((left - right) ** 2 for left, right in zip(rgb, other))
+        if dist < best_dist:
+            best_dist = dist
+            best_name = name
+    if best_dist <= _HEX_DISTANCE_LIMIT:
+        return best_name
+    return ""
+
+
+def color_from_model_number(model_number: str) -> str:
+    text = (model_number or "").strip().upper()
+    if not text:
+        return ""
+    match = _MODEL_NUMBER_RE.search(text)
+    if not match:
+        return ""
+    token = match.group(0)
+    if token in MODEL_NUMBER_COLORS:
+        return MODEL_NUMBER_COLORS[token]
+    # Region suffixes (LL/A, ZP/A, …) are already stripped by the regex cut at non-alnum,
+    # but keep a 5-char Apple marketing prefix fallback (MLWL3, MK7M3).
+    if len(token) >= 5 and token[:5] in MODEL_NUMBER_COLORS:
+        return MODEL_NUMBER_COLORS[token[:5]]
+    return ""
+
+
+def color_from_product_enclosure(product_type: str, enclosure: str) -> str:
+    mapping = PRODUCT_ENCLOSURE_COLORS.get(product_type or "")
+    if not mapping:
+        return ""
+    return mapping.get(str(enclosure).strip().lstrip("#"), "")
+
+
+def _pretty_color(value: str, *, allow_front_digits: bool = False) -> str:
     text = value.strip().lstrip("#")
+    if not text:
+        return ""
     key = text.lower().replace("_", " ").replace("-", " ")
+    if allow_front_digits and key in FRONT_DIGIT_COLORS:
+        return FRONT_DIGIT_COLORS[key]
     if key in COLOR_MAP:
         return COLOR_MAP[key]
     compact = key.replace(" ", "")
     if compact in COLOR_MAP:
         return COLOR_MAP[compact]
-    if text.replace(" ", "").isalnum() and any(ch.isalpha() for ch in text):
+    # Bare enclosure digits are not universal (3 means Gold on old iPhones, Pink on mini 6).
+    if compact.isdigit():
+        return ""
+    named_hex = _nearest_named_hex(compact)
+    if named_hex:
+        return named_hex
+    if compact.isalpha():
         return " ".join(part.capitalize() for part in key.split())
     return ""
 
 
+def _color_tokens(values: dict[str, Any], keys: tuple[str, ...], rgb_keys: tuple[str, ...] = ()) -> list[str]:
+    tokens: list[str] = []
+    for key in keys:
+        token = _normalize_color_value(values.get(key), as_rgb=False)
+        if token and token != "0":
+            tokens.append(token)
+    for key in rgb_keys:
+        token = _normalize_color_value(values.get(key), as_rgb=True)
+        if token:
+            tokens.append(token)
+    return tokens
+
+
 def color_from_lockdown(values: dict[str, Any]) -> str:
-    raw = str(values.get("DeviceColor") or "").strip()
-    enclosure = str(values.get("DeviceEnclosureColor") or values.get("DeviceCoverGlassColor") or "").strip()
-    for candidate in (raw, enclosure, enclosure.lstrip("#")):
-        pretty = _pretty_color(candidate)
+    product_type = str(values.get("ProductType") or "").strip()
+    model_number = str(values.get("ModelNumber") or "").strip()
+
+    from_model = color_from_model_number(model_number)
+    if from_model:
+        return from_model
+
+    housing = _color_tokens(values, _HOUSING_COLOR_KEYS, _HOUSING_RGB_KEYS)
+    for token in housing:
+        from_product = color_from_product_enclosure(product_type, token)
+        if from_product:
+            return from_product
+        pretty = _pretty_color(token, allow_front_digits=False)
+        if pretty:
+            return pretty
+    if housing:
+        return ""
+
+    for token in _color_tokens(values, _FRONT_COLOR_KEYS, _FRONT_RGB_KEYS):
+        pretty = _pretty_color(token, allow_front_digits=True)
         if pretty:
             return pretty
     return ""
+
+
+async def _fill_lockdown_color_keys(lockdown, values: dict[str, Any]) -> None:
+    for key in COLOR_LOCKDOWN_KEYS:
+        if values.get(key) not in (None, ""):
+            continue
+        try:
+            got = await _call(lockdown.get_value, key=key)
+        except TypeError:
+            try:
+                got = await _call(lockdown.get_value, None, key)
+            except Exception:
+                continue
+        except Exception:
+            continue
+        if got not in (None, ""):
+            values[key] = got
 
 
 def cycle_count_from_payload(payload: Any) -> int | None:
@@ -268,6 +419,9 @@ async def _fetch_pymobiledevice3() -> DeviceInfo:
             values = await _call(lockdown.get_value)
         if not isinstance(values, dict):
             values = {}
+        else:
+            values = dict(values)
+        await _fill_lockdown_color_keys(lockdown, values)
 
         extra: dict[str, Any] = {"source": "pymobiledevice3"}
         try:
@@ -360,6 +514,15 @@ def _fetch_libimobiledevice_cli() -> DeviceInfo:
                 continue
     extra["battery_health"] = battery_health_from_payload(battery_payload)
     extra["cycle_count"] = cycle_count_from_payload(battery_payload)
+    for key in COLOR_LOCKDOWN_KEYS:
+        if values.get(key) not in (None, ""):
+            continue
+        try:
+            text = _run_cli([ideviceinfo, "-k", key], timeout=4).strip()
+        except Exception:
+            continue
+        if text:
+            values[key] = text
     return device_info_from_lockdown_values(values, extra)
 
 

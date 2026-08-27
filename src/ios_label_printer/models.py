@@ -150,6 +150,8 @@ LABEL_FIELDS = (
     ("qr_payload", "QR code"),
 )
 
+QR_PLACEHOLDER = "N/A"
+
 DEFAULT_QR_FIELDS = (
     "model",
     "color",
@@ -249,9 +251,8 @@ class LabelElement:
     def build_qr_payload(self, device: DeviceInfo, template: LabelTemplate | None = None) -> str:
         parts: list[str] = []
         for key in self.qr_fields or DEFAULT_QR_FIELDS:
-            value = device.qr_value(key).strip()
-            if value:
-                parts.append(value)
+            value = device.qr_value(key).strip() or QR_PLACEHOLDER
+            parts.append(value)
         if template:
             for element in template.elements:
                 if element.is_custom() and element.visible and element.text.strip():

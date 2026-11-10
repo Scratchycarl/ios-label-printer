@@ -246,6 +246,14 @@ class LabelCanvas(QGraphicsView):
             self.scale_px = scale_px
         self.rebuild()
 
+    def refresh_device(self, device: DeviceInfo) -> None:
+        self.device = device
+        for item in self._items.values():
+            item.device = device
+            if item.element.type == "qr" or item.element.field == "qr_payload":
+                item._pixmap = self._qr_pixmap(item.element)
+            item.update()
+
     def rebuild(self) -> None:
         self._finish_text_edit()
         self._finish_choice_edit()

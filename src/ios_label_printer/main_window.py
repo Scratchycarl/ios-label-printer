@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import traceback
 from io import BytesIO
 from pathlib import Path
@@ -26,9 +27,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QStatusBar,
+    QTabWidget,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -46,6 +49,44 @@ from ios_label_printer.template import (
     save_template,
     user_templates_dir,
 )
+
+
+# (attribute, label, kind, group). kind is "text" or "int".
+MANUAL_FIELDS = (
+    ("model", "Model", "text", "label"),
+    ("battery_health", "Battery health (%)", "int", "label"),
+    ("storage_gb", "Storage (GB)", "int", "label"),
+    ("ios_version", "OS version", "text", "label"),
+    ("serial", "Serial number", "text", "label"),
+    ("imei", "IMEI", "text", "label"),
+    ("frp_status", "FRP status", "text", "label"),
+    ("csc", "CSC", "text", "label"),
+    ("color", "Color", "text", "qr"),
+    ("imei2", "IMEI 2", "text", "qr"),
+    ("cycle_count", "Charge cycles", "int", "qr"),
+    ("product_type", "Product type", "text", "qr"),
+    ("model_number", "Model number", "text", "qr"),
+    ("region", "Sales region", "text", "qr"),
+    ("regulatory", "Regulatory model", "text", "qr"),
+    ("device_name", "Device name", "text", "qr"),
+    ("unique_number", "Unique number", "text", "qr"),
+    ("phone_number", "Phone number", "text", "qr"),
+    ("country", "Country", "text", "qr"),
+    ("ecid", "ECID", "text", "qr"),
+)
+
+
+def _parse_manual_int(text: str) -> tuple[bool, int | None]:
+    raw = text.strip().lower()
+    if raw.endswith("%"):
+        raw = raw[:-1].strip()
+    if raw.endswith("gb"):
+        raw = raw[:-2].strip()
+    if not raw:
+        return True, None
+    if raw.isdigit():
+        return True, int(raw)
+    return False, None
 
 
 def pil_to_qimage(image) -> QImage:
@@ -111,6 +152,8 @@ class MainWindow(QMainWindow):
             self.template = bundled_default_template()
         self.platform = "apple"
         self.device = DeviceInfo.sample()
+        self._read_snapshot = copy.copy(self.device)
+        self._manual_rows: list[tuple[str, QLineEdit, str]] = []
         self.dirty = False
         self._thread: QThread | None = None
         self._worker: DeviceWorker | None = None
@@ -241,7 +284,13 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([260, 720, 300])
-        self.setCentralWidget(splitter)
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.addTab(splitter, "Label")
+        self.tabs.setTabToolTip(0, "Arrange the label")
+        self.tabs.addTab(self._build_manual_panel(), "Manual values")
+        self.tabs.setTabToolTip(1, "Type values the phone did not report")
+        self.setCentralWidget(self.tabs)
         self.setStatusBar(QStatusBar())
 
         self.field_list.itemClicked.connect(self._on_field_list_clicked)
@@ -382,6 +431,57 @@ class MainWindow(QMainWindow):
         layout.addWidget(preview_box, 1)
         return panel
 
+    def _build_manual_panel(self) -> QWidget:
+        panel = QWidget()
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(16, 12, 16, 12)
+        outer.setSpacing(10)
+
+        hint = QLabel(
+            "Use this when a phone does not report a value, such as battery health on older iOS. "
+            "What you type replaces the read value on the label and in the QR code. "
+            "Leave a number blank to keep it unset. Read device again to start from a fresh read."
+        )
+        hint.setWordWrap(True)
+        outer.addWidget(hint)
+
+        actions = QHBoxLayout()
+        restore = QPushButton("Restore last read")
+        restore.clicked.connect(self._restore_read_values)
+        actions.addWidget(restore)
+        actions.addStretch(1)
+        outer.addLayout(actions)
+
+        label_box = QGroupBox("On the label")
+        label_form = QFormLayout(label_box)
+        extra_box = QGroupBox("Also in the QR code")
+        extra_form = QFormLayout(extra_box)
+        self._manual_rows = []
+        for name, title, kind, group in MANUAL_FIELDS:
+            edit = QLineEdit()
+            edit.setClearButtonEnabled(True)
+            if kind == "int":
+                edit.setPlaceholderText("Not read")
+            edit.textChanged.connect(self._apply_manual_fields)
+            form = label_form if group == "label" else extra_form
+            form.addRow(title, edit)
+            self._manual_rows.append((name, edit, kind))
+
+        columns = QHBoxLayout()
+        columns.setContentsMargins(0, 0, 0, 0)
+        columns.setSpacing(16)
+        columns.addWidget(label_box, 1)
+        columns.addWidget(extra_box, 1)
+        host = QWidget()
+        host.setLayout(columns)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(host)
+        outer.addWidget(scroll, 1)
+        return panel
+
     def _mm_spin(self, minimum: float = 0, maximum: float = 80) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
         spin.setRange(minimum, maximum)
@@ -399,9 +499,8 @@ class MainWindow(QMainWindow):
         self.margin_right.setValue(self.template.margin_mm.right)
         self.margin_bottom.setValue(self.template.margin_mm.bottom)
         self.margin_left.setValue(self.template.margin_mm.left)
-        self.device_model_label.setText(self.device.model or "—")
-        self.device_source_label.setText(self.device.source or "—")
-        self.device_frp_label.setText(self.device.frp_status or "—")
+        self._refresh_device_summary()
+        self._fill_manual_fields()
         self.canvas.set_document(self.template, self.device)
         self._building = False
         self.refresh_preview()
@@ -603,10 +702,64 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._preview_timer.start()
 
+    def _adopt_device(self, info: DeviceInfo) -> None:
+        self.device = info
+        self._read_snapshot = copy.copy(info)
+
+    def _source_text(self) -> str:
+        source = self.device.source or "—"
+        if self._values_overridden():
+            return f"{source} · manual"
+        return source
+
+    def _values_overridden(self) -> bool:
+        snapshot = self._read_snapshot
+        if snapshot is None:
+            return False
+        for name, _edit, _kind in self._manual_rows:
+            if getattr(self.device, name) != getattr(snapshot, name):
+                return True
+        return False
+
+    def _refresh_device_summary(self) -> None:
+        self.device_model_label.setText(self.device.model or "—")
+        self.device_source_label.setText(self._source_text())
+        self.device_frp_label.setText(self.device.frp_status or "—")
+
+    def _fill_manual_fields(self) -> None:
+        for name, edit, _kind in self._manual_rows:
+            value = getattr(self.device, name)
+            edit.blockSignals(True)
+            edit.setText("" if value is None else str(value))
+            edit.blockSignals(False)
+
+    def _apply_manual_fields(self) -> None:
+        if self._building:
+            return
+        for name, edit, kind in self._manual_rows:
+            if kind == "int":
+                ok, value = _parse_manual_int(edit.text())
+                if not ok:
+                    continue
+                setattr(self.device, name, value)
+            else:
+                setattr(self.device, name, edit.text().strip())
+        self._refresh_device_summary()
+        self.canvas.refresh_device(self.device)
+        self._preview_timer.start()
+
+    def _restore_read_values(self) -> None:
+        if self._read_snapshot is None:
+            return
+        self.device = copy.copy(self._read_snapshot)
+        self.reload_document()
+        self.statusBar().showMessage("Restored values from the last read")
+
     def _on_platform_changed(self) -> None:
         self.platform = "samsung" if self.samsung_button.isChecked() else "apple"
         if self.device.source == "sample":
-            self.device = DeviceInfo.sample_samsung() if self.platform == "samsung" else DeviceInfo.sample()
+            info = DeviceInfo.sample_samsung() if self.platform == "samsung" else DeviceInfo.sample()
+            self._adopt_device(info)
             self.reload_document()
         if self.platform == "samsung":
             self.statusBar().showMessage(
@@ -633,16 +786,20 @@ class MainWindow(QMainWindow):
         self._thread.start()
 
     def _on_device_read(self, info: DeviceInfo) -> None:
-        self.device = info
+        self._adopt_device(info)
         self.reload_document()
-        self.statusBar().showMessage(f"Connected: {info.model}  ({info.source})")
+        message = f"Connected: {info.model}  ({info.source})"
+        if info.platform != "samsung" and info.battery_health is None:
+            message += ". Battery health was not read — set it on the Manual values tab."
+        self.statusBar().showMessage(message)
 
     def _on_device_failed(self, message: str) -> None:
         self.statusBar().showMessage("No device — showing sample data")
         QMessageBox.warning(self, "Could not read device", message)
 
     def use_sample(self) -> None:
-        self.device = DeviceInfo.sample_samsung() if self.platform == "samsung" else DeviceInfo.sample()
+        info = DeviceInfo.sample_samsung() if self.platform == "samsung" else DeviceInfo.sample()
+        self._adopt_device(info)
         self.reload_document()
         self.statusBar().showMessage("Showing sample data")
 
